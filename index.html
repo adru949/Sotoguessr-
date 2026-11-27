@@ -235,4 +235,528 @@
   </div>
 
   <script type="module">
-    import { initializeApp } from "
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-app.js";
+    import { getDatabase, ref, set, get, update, onValue, off } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-database.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCoo1fH2Jh1nC-bXS_RO-eG0c7OJ_sIjFo",
+      authDomain: "sotoguessr.firebaseapp.com",
+      databaseURL: "https://sotoguessr-default-rtdb.europe-west1.firebasedatabase.app",
+      projectId: "sotoguessr",
+      storageBucket: "sotoguessr.firebasestorage.app",
+      messagingSenderId: "219744787650",
+      appId: "1:219744787650:web:eceec0708b838d4f3caf5b"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
+    const ROUNDS = [
+      { name: "Castillo de San Martín", lat: 43.5419, lng: -6.0772, image: "1000047883.jpg" },
+      { name: "Puerto Chino", lat: 43.5535, lng: -6.0762, image: "1000047884.jpg" },
+      { name: "Puerto de San Juan de la Arena", lat: 43.5567, lng: -6.0766, image: "1000047885.jpg" },
+      { name: "La Ferrería (La Corrada)", lat: 43.5266, lng: -6.0350, image: "1000047886.jpg" }
+    ];
+
+    const MAP_CENTER = [43.540, -6.058];
+    const MAP_ZOOM = 12;
+    const PRESSURE_SECONDS = 10;
+
+    let mode = "solo"; // "solo" | "duel"
+    let role = null; // "p1" | "p2"
+    let roomCode = null;
+    let roomRef = null;
+    let roomData = null;
+
+    let roundOrder = [];
+    let currentIdx = 0;
+    let soloScore = 0;
+    let guessMarker = null;
+    let userGuess = null;
+    let resMap = null;
+    let submittedThisRound = false;
+    let shownResultForRound = -1;
+
+    let countdownInterval = null;
+    let countdownStartedForRound = -1;
+
+    const map = L.map("map", { zoomControl: false }).setView(MAP_CENTER, MAP_ZOOM);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap"
+    }).addTo(map);
+
+    map.on("click", (e) => {
+      if (submittedThisRound) return;
+      userGuess = e.latlng;
+      if (guessMarker) guessMarker.setLatLng(userGuess);
+      else guessMarker = L.marker(userGuess).addTo(map);
+      const btn = document.getElementById("guess-btn");
+      btn.disabled = false;
+      btn.textContent = "Confirmar ubicación";
+    });
+
+    function getPlayerName() {
+      const val = document.getElementById("player-name").value.trim();
+      return val || (role === "p2" ? "Rival" : "Jugador");
+    }
+
+    function shuffleIndices(len) {
+      const arr = Array.from({ length: len }, (_, i) => i);
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    }
+
+    function generateRoomCode() {
+      const num = Math.floor(1000 + Math.random() * 9000);
+      return `SOTO-${num}`;
+    }
+
+    function setLobbyMessage(html) {
+      const box = document.getElementById("lobby-status");
+      box.innerHTML = html;
+      box.style.display = "block";
+    }
+
+    function showStatusPill(msg) {
+      const el = document.getElementById("status-pill");
+      el.textContent = msg;
+      el.style.display = "block";
+    }
+
+    function hideStatusPill() {
+      document.getElementById("status-pill").style.display = "none";
+    }
+
+    function clearCountdown() {
+      if (countdownInterval) {
+        clearInterval(countdownInterval);
+        countdownInterval = null;
+      }
+      document.getElementById("timer-banner").style.display = "none";
+    }
+
+    function getDistanceMeters(lat1, lon1, lat2, lon2) {
+      const R = 6371e3;
+      const p1 = lat1 * Math.PI / 180, p2 = lat2 * Math.PI / 180;
+      const dp = (lat2 - lat1) * Math.PI / 180, dl = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    function calculatePoints(guessLat, guessLng, targetLat, targetLng) {
+      if (guessLat == null || guessLng == null) return 0;
+      const dist = getDistanceMeters(guessLat, guessLng, targetLat, targetLng);
+      return dist < 25 ? 5000 : Math.max(0, Math.round(5000 * Math.exp(-dist / 1200)));
+    }
+
+    // Modo solitario
+    window.startSoloGame = function () {
+      cleanupRoomListener();
+      mode = "solo";
+      role = "p1";
+      roundOrder = shuffleIndices(ROUNDS.length);
+      currentIdx = 0;
+      soloScore = 0;
+      shownResultForRound = -1;
+
+      document.getElementById("lobby-screen").style.display = "none";
+      document.getElementById("score-badge").style.display = "block";
+      document.getElementById("duel-score-badge").style.display = "none";
+      document.getElementById("room-badge").style.display = "none";
+      document.getElementById("total-score").textContent = "0";
+
+      setupRoundUI(0);
+    };
+
+    // Crear sala 1v1
+    window.createDuelRoom = async function () {
+      cleanupRoomListener();
+      mode = "duel";
+      role = "p1";
+      roomCode = generateRoomCode();
+      roomRef = ref(db, `rooms/${roomCode}`);
+
+      const order = shuffleIndices(ROUNDS.length);
+      const initialState = {
+        code: roomCode,
+        status: "waiting", // "waiting" | "playing" | "finished"
+        roundOrder: order,
+        currentRound: 0,
+        p1: { name: getPlayerName(), score: 0 },
+        p2: { name: "", score: 0 },
+        rounds: {}
+      };
+
+      await set(roomRef, initialState);
+      listenToRoom();
+
+      setLobbyMessage(
+        `Sala creada. Comparte este código con tu rival:<br>` +
+        `<span class="room-code-big">${roomCode}</span><br>` +
+        `<span style="color:#94a3b8; display:block; margin-top:6px;">Esperando a que se una el segundo jugador...</span>`
+      );
+    };
+
+    // Unirse a sala 1v1
+    window.joinDuelRoom = async function () {
+      const inputCode = document.getElementById("room-code-input").value.trim().toUpperCase();
+      if (!inputCode) {
+        setLobbyMessage("Escribe el código de la sala para unirte.");
+        return;
+      }
+
+      cleanupRoomListener();
+      mode = "duel";
+      role = "p2";
+      roomCode = inputCode;
+      roomRef = ref(db, `rooms/${roomCode}`);
+
+      const snap = await get(roomRef);
+      if (!snap.exists()) {
+        setLobbyMessage(`No existe ninguna sala con el código <b>${roomCode}</b>.`);
+        return;
+      }
+
+      await update(roomRef, {
+        status: "playing",
+        "p2/name": getPlayerName()
+      });
+
+      listenToRoom();
+    };
+
+    function cleanupRoomListener() {
+      clearCountdown();
+      if (roomRef) {
+        off(roomRef);
+        roomRef = null;
+      }
+      roomData = null;
+    }
+
+    function listenToRoom() {
+      onValue(roomRef, (snap) => {
+        if (!snap.exists()) return;
+        roomData = snap.val();
+
+        if (roomData.status === "waiting") {
+          return;
+        }
+
+        if (roomData.status === "playing") {
+          document.getElementById("lobby-screen").style.display = "none";
+          document.getElementById("score-badge").style.display = "none";
+          document.getElementById("duel-score-badge").style.display = "block";
+          document.getElementById("room-badge").style.display = "block";
+          document.getElementById("room-badge-code").textContent = roomData.code;
+
+          const myScore = roomData[role]?.score ?? 0;
+          const oppRole = role === "p1" ? "p2" : "p1";
+          const oppScore = roomData[oppRole]?.score ?? 0;
+          document.getElementById("my-duel-score").textContent = myScore;
+          document.getElementById("opp-duel-score").textContent = oppScore;
+
+          roundOrder = roomData.roundOrder || [0, 1, 2, 3];
+          const serverRound = roomData.currentRound ?? 0;
+
+          if (currentIdx !== serverRound) {
+            currentIdx = serverRound;
+            setupRoundUI(currentIdx);
+          } else if (!document.getElementById("round-photo").src.includes(ROUNDS[roundOrder[currentIdx]].image)) {
+            setupRoundUI(currentIdx);
+          }
+
+          syncDuelRoundState(serverRound);
+        }
+
+        if (roomData.status === "finished") {
+          clearCountdown();
+          hideStatusPill();
+          document.getElementById("result-modal").style.display = "none";
+          showFinalDuelModal();
+        }
+      });
+    }
+
+    function setupRoundUI(idx) {
+      clearCountdown();
+      hideStatusPill();
+      countdownStartedForRound = -1;
+      submittedThisRound = false;
+      userGuess = null;
+
+      if (guessMarker) {
+        map.removeLayer(guessMarker);
+        guessMarker = null;
+      }
+
+      const btn = document.getElementById("guess-btn");
+      btn.disabled = true;
+      btn.textContent = "Pincha en el mapa";
+      map.setView(MAP_CENTER, MAP_ZOOM);
+
+      document.getElementById("round-num").textContent = `${idx + 1} / ${roundOrder.length}`;
+
+      const roundObj = ROUNDS[roundOrder[idx]];
+      const imgEl = document.getElementById("round-photo");
+      const errEl = document.getElementById("photo-error");
+      errEl.style.display = "none";
+      imgEl.style.display = "block";
+
+      imgEl.onerror = () => {
+        imgEl.style.display = "none";
+        errEl.style.display = "block";
+        errEl.innerHTML =
+          `No se pudo cargar la imagen <b>${roundObj.image}</b>.<br>` +
+       `Comprueba que esté en la misma carpeta
+        que <code>index.html</code> y con el mismo nombre exacto.`;
+      };
+      imgEl.src = roundObj.image;
+    }
+
+    function syncDuelRoundState(roundIndex) {
+      if (!roomData || mode !== "duel") return;
+      const rState = roomData.rounds?.[roundIndex] || {};
+      const mySub = rState[role];
+      const oppRole = role === "p1" ? "p2" : "p1";
+      const oppSub = rState[oppRole];
+
+      if (mySub) {
+        submittedThisRound = true;
+        clearCountdown();
+        const btn = document.getElementById("guess-btn");
+        btn.disabled = true;
+        btn.textContent = oppSub ? "Cerrando ronda..." : "Esperando al rival...";
+      }
+
+      // Si el rival ya respondió y yo todavía no, arranca la cuenta atrás de 10 segundos
+      if (oppSub && !mySub && !submittedThisRound) {
+        showStatusPill(`¡${roomData[oppRole]?.name || "Tu rival"} ya ha marcado su punto!`);
+        if (countdownStartedForRound !== roundIndex) {
+          countdownStartedForRound = roundIndex;
+          startPressureCountdown(roundIndex);
+        }
+      } else if (!oppSub && !mySub) {
+        hideStatusPill();
+      }
+
+      // Cuando ambos han respondido en esta ronda, se muestra el resultado conjunto
+      if (mySub && oppSub && shownResultForRound !== roundIndex) {
+        shownResultForRound = roundIndex;
+        clearCountdown();
+        hideStatusPill();
+        openDuelResultModal(roundIndex, rState);
+      }
+    }
+
+    function startPressureCountdown(roundIndex) {
+      clearCountdown();
+      let remaining = PRESSURE_SECONDS;
+      const banner = document.getElementById("timer-banner");
+      const secSpan = document.getElementById("countdown-sec");
+      secSpan.textContent = remaining;
+      banner.style.display = "block";
+
+      countdownInterval = setInterval(() => {
+        remaining--;
+        if (remaining > 0) {
+          secSpan.textContent = remaining;
+        } else {
+          clearCountdown();
+          if (!submittedThisRound && mode === "duel" && currentIdx === roundIndex) {
+            const lat = userGuess ? userGuess.lat : null;
+            const lng = userGuess ? userGuess.lng : null;
+            submitDuelAnswer(roundIndex, lat, lng);
+          }
+        }
+      }, 1000);
+    }
+
+    window.handleGuessButton = function () {
+      if (submittedThisRound) return;
+      if (mode === "solo") {
+        if (!userGuess) return;
+        submitSoloGuess();
+      } else {
+        if (!userGuess) return;
+        submittedThisRound = true;
+        clearCountdown();
+        const btn = document.getElementById("guess-btn");
+        btn.disabled = true;
+        btn.textContent = "Esperando al rival...";
+        submitDuelAnswer(currentIdx, userGuess.lat, userGuess.lng);
+      }
+    };
+
+    function submitSoloGuess() {
+      submittedThisRound = true;
+      const roundObj = ROUNDS[roundOrder[currentIdx]];
+      const dist = getDistanceMeters(userGuess.lat, userGuess.lng, roundObj.lat, roundObj.lng);
+      const pts = calculatePoints(userGuess.lat, userGuess.lng, roundObj.lat, roundObj.lng);
+      soloScore += pts;
+      document.getElementById("total-score").textContent = soloScore;
+
+      document.getElementById("res-duel-grid").style.display = "none";
+      document.getElementById("res-solo-text").style.display = "block";
+      document.getElementById("res-title").textContent = roundObj.name;
+      document.getElementById("res-solo-text").textContent =
+        `Estuviste a ${dist < 1000 ? Math.round(dist) + " metros" : (dist / 1000).toFixed(2) + " km"} — +${pts} puntos`;
+
+      document.getElementById("next-btn").textContent =
+        currentIdx < roundOrder.length - 1 ? "Siguiente Ronda →" : "Ver Puntuación Final";
+
+      document.getElementById("result-modal").style.display = "flex";
+      renderResultMap([roundObj.lat, roundObj.lng], [{
+        lat: userGuess.lat,
+        lng: userGuess.lng,
+        label: "Tu respuesta",
+        color: "#ef4444"
+      }]);
+    }
+
+    async function submitDuelAnswer(roundIndex, lat, lng) {
+      const roundObj = ROUNDS[roundOrder[roundIndex]];
+      const pts = calculatePoints(lat, lng, roundObj.lat, roundObj.lng);
+      const dist = (lat != null && lng != null)
+        ? getDistanceMeters(lat, lng, roundObj.lat, roundObj.lng)
+        : null;
+
+      const currentTotal = roomData?.[role]?.score ?? 0;
+      const newTotal = currentTotal + pts;
+
+      await update(ref(db, `rooms/${roomCode}/rounds/${roundIndex}/${role}`), {
+        lat,
+        lng,
+        points: pts,
+        distance: dist,
+        submittedAt: Date.now()
+      });
+
+      await update(ref(db, `rooms/${roomCode}/${role}`), {
+        score: newTotal
+      });
+    }
+
+    function openDuelResultModal(roundIndex, rState) {
+      const roundObj = ROUNDS[roundOrder[roundIndex]];
+      const p1 = rState.p1 || { points: 0, distance: null, lat: null, lng: null };
+      const p2 = rState.p2 || { points: 0, distance: null, lat: null, lng: null };
+
+      document.getElementById("res-title").textContent = roundObj.name;
+      document.getElementById("res-solo-text").style.display = "none";
+      document.getElementById("res-duel-grid").style.display = "grid";
+
+      const fmtDist = (d) => d == null ? "Sin tiempo" : (d < 1000 ? `${Math.round(d)} m` : `${(d / 1000).toFixed(2)} km`);
+
+      document.getElementById("box-p1").innerHTML =
+        `<strong>${roomData.p1?.name || "Jugador 1"}</strong>` +
+        `Distancia: ${fmtDist(p1.distance)}<br>` +
+        `Ronda: <b>+${p1.points} pts</b> (Total: ${roomData.p1?.score ?? 0})`;
+
+      document.getElementById("box-p2").innerHTML =
+        `<strong>${roomData.p2?.name || "Jugador 2"}</strong>` +
+        `Distancia: ${fmtDist(p2.distance)}<br>` +
+        `Ronda: <b>+${p2.points} pts</b> (Total: ${roomData.p2?.score ?? 0})`;
+
+      const nextBtn = document.getElementById("next-btn");
+      if (role === "p1") {
+        nextBtn.disabled = false;
+        nextBtn.textContent = roundIndex < roundOrder.length - 1 ? "Siguiente Ronda →" : "Ver Ganador Final";
+      } else {
+        nextBtn.disabled = true;
+        nextBtn.textContent = "Esperando al anfitrión...";
+      }
+
+      document.getElementById("result-modal").style.display = "flex";
+
+      const markers = [];
+      if (p1.lat != null && p1.lng != null) {
+        markers.push({ lat: p1.lat, lng: p1.lng, label: roomData.p1?.name || "Jugador 1", color: "#38bdf8" });
+      }
+      if (p2.lat != null && p2.lng != null) {
+        markers.push({ lat: p2.lat, lng: p2.lng, label: roomData.p2?.name || "Jugador 2", color: "#f97316" });
+      }
+      renderResultMap([roundObj.lat, roundObj.lng], markers);
+    }
+
+    function renderResultMap(actualLatLng, guessMarkers) {
+      setTimeout(() => {
+        if (resMap) resMap.remove();
+        resMap = L.map("result-map");
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(resMap);
+
+        L.marker(actualLatLng).addTo(resMap).bindPopup("Ubicación real").openPopup();
+        const boundsPoints = [actualLatLng];
+
+        guessMarkers.forEach((m) => {
+          const pt = [m.lat, m.lng];
+          boundsPoints.push(pt);
+          L.circleMarker(pt, { radius: 8, color: m.color, fillColor: m.color, fillOpacity: 0.9 })
+            .addTo(resMap)
+            .bindPopup(m.label);
+          L.polyline([actualLatLng, pt], { color: m.color, dashArray: "6,6" }).addTo(resMap);
+        });
+
+        resMap.fitBounds(L.latLngBounds(boundsPoints), { padding: [35, 35] });
+      }, 100);
+    }
+
+    window.handleNextRound = async function () {
+      document.getElementById("result-modal").style.display = "none";
+
+      if (mode === "solo") {
+        if (currentIdx < roundOrder.length - 1) {
+          currentIdx++;
+          setupRoundUI(currentIdx);
+        } else {
+          document.getElementById("final-title").textContent = "🏆 ¡Partida completada!";
+          document.getElementById("final-summary").textContent =
+            `Has conseguido ${soloScore} de ${roundOrder.length * 5000} puntos posibles en Soto del Barco.`;
+          document.getElementById("final-modal").style.display = "flex";
+        }
+        return;
+      }
+
+      if (mode === "duel" && role === "p1") {
+        if (currentIdx < roundOrder.length - 1) {
+          await update(ref(db, `rooms/${roomCode}`), {
+            currentRound: currentIdx + 1
+          });
+        } else {
+          await update(ref(db, `rooms/${roomCode}`), {
+            status: "finished"
+          });
+        }
+      }
+    };
+
+    function showFinalDuelModal() {
+      const s1 = roomData?.p1?.score ?? 0;
+      const s2 = roomData?.p2?.score ?? 0;
+      const n1 = roomData?.p1?.name || "Jugador 1";
+      const n2 = roomData?.p2?.name || "Jugador 2";
+
+      let resultadoTexto = "";
+      if (s1 > s2) resultadoTexto = `¡Gana ${n1} (${s1} pts vs ${s2} pts)!`;
+      else if (s2 > s1) resultadoTexto = `¡Gana ${n2} (${s2} pts vs ${s1} pts)!`;
+      else resultadoTexto = `¡Empate total a ${s1} puntos!`;
+
+      document.getElementById("final-title").textContent = "🏆 ¡Duelo finalizado!";
+      document.getElementById("final-summary").innerHTML =
+        `<b>${resultadoTexto}</b><br><br>${n1}: ${s1} puntos<br>${n2}: ${s2} puntos`;
+      document.getElementById("final-modal").style.display = "flex";
+    }
+
+    window.backToLobby = function () {
+      cleanupRoomListener();
+      document.getElementById("final-modal").style.display = "none";
+      document.getElementById("result-modal").style.display = "none";
+      document.getElementById("lobby-status").style.display = "none";
+      document.getElementById("lobby-screen").style.display = "flex";
+    };
+  </script>
+</body>
+</html>
