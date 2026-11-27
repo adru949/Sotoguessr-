@@ -3,83 +3,150 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SotoGuessr — Soto del Barco</title>
+  <title>SotoGuessr — Duelo 1v1 en Soto del Barco</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
     body, html { width: 100%; height: 100%; overflow: hidden; background: #0f172a; color: #f8fafc; }
 
-    .photo-stage {
-      width: 100vw; height: 100vh; position: relative; background: #020617;
-      display: flex; align-items: center; justify-content: center; overflow: hidden;
+    /* Lobby inicial */
+    #lobby-screen {
+      position: fixed; inset: 0; z-index: 60;
+      background: radial-gradient(circle at top, #1e293b 0%, #020617 100%);
+      display: flex; align-items: center; justify-content: center; padding: 18px;
     }
-    .photo-stage img {
-      width: 100%; height: 100%; object-fit: contain; transition: transform 0.25s ease; cursor: zoom-in;
+    .lobby-card {
+      width: 100%; max-width: 460px; background: rgba(15, 23, 42, 0.94);
+      border: 1px solid rgba(255,255,255,0.14); border-radius: 18px;
+      padding: 24px; box-shadow: 0 24px 50px rgba(0,0,0,0.65);
     }
-    .photo-stage img.zoomed { transform: scale(2.1); cursor: zoom-out; }
+    .lobby-card h1 { font-size: 26px; color: #38bdf8; margin-bottom: 6px; }
+    .lobby-card .sub { font-size: 14px; color: #94a3b8; margin-bottom: 18px; line-height: 1.4; }
+    .field-group { margin-bottom: 14px; }
+    .field-group label { display: block; font-size: 13px; color: #cbd5e1; margin-bottom: 6px; font-weight: 600; }
+    .input-txt {
+      width: 100%; padding: 11px 13px; border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.18); background: #1e293b;
+      color: #f8fafc; font-size: 15px; outline: none;
+    }
+    .input-txt:focus { border-color: #38bdf8; }
+    .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+    .btn-primary {
+      width: 100%; padding: 12px 14px; border-radius: 10px; border: none;
+      background: #2563eb; color: #fff; font-weight: 700; font-size: 14px; cursor: pointer;
+    }
+    .btn-primary:hover { background: #1d4ed8; }
+    .btn-green {
+      width: 100%; padding: 12px 14px; border-radius: 10px; border: none;
+      background: #16a34a; color: #fff; font-weight: 700; font-size: 14px; cursor: pointer;
+    }
+    .btn-green:hover { background: #15803d; }
+    .btn-ghost {
+      width: 100%; padding: 11px 14px; border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.18); background: transparent;
+      color: #e2e8f0; font-weight: 600; font-size: 14px; cursor: pointer; margin-top: 10px;
+    }
+    .btn-ghost:hover { background: rgba(255,255,255,0.06); }
+    .lobby-status {
+      margin-top: 14px; padding: 12px; border-radius: 10px;
+      background: rgba(30, 41, 59, 0.9); border: 1px solid rgba(56, 189, 248, 0.35);
+      font-size: 13px; color: #e2e8f0; display: none; line-height: 1.45;
+    }
+    .room-code-big {
+      display: inline-block; margin-top: 4px; padding: 4px 10px; border-radius: 8px;
+      background: #0f172a; border: 1px dashed #38bdf8; color: #38bdf8;
+      font-size: 18px; font-weight: 800; letter-spacing: 1.5px;
+    }
 
-    .img-error-box {
-      display: none; position: absolute; z-index: 5; background: rgba(15, 23, 42, 0.92);
-      border: 1px solid #ef4444; color: #fecaca; padding: 18px 22px; border-radius: 12px;
-      max-width: 440px; text-align: center; font-size: 14px; line-height: 1.5;
+    /* Foto y error */
+    #photo-container {
+      width: 100vw; height: 100vh; position: relative;
+      display: flex; align-items: center; justify-content: center; background: #020617;
+    }
+    #round-photo { max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: cover; display: block; }
+    .photo-error {
+      display: none; max-width: 440px; margin: 20px; padding: 20px; border-radius: 14px;
+      background: rgba(127, 29, 29, 0.45); border: 1px solid #f87171; text-align: center; line-height: 1.5;
     }
 
+    /* HUD superior */
     .hud-top {
-      position: absolute; top: 14px; left: 14px; right: 14px; z-index: 10;
-      display: flex; justify-content: space-between; align-items: center; pointer-events: none;
+      position: fixed; top: 14px; left: 14px; right: 14px; z-index: 20;
+      display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;
+      pointer-events: none; flex-wrap: wrap;
     }
     .badge-group { display: flex; gap: 8px; flex-wrap: wrap; }
     .badge {
       background: rgba(15, 23, 42, 0.88); backdrop-filter: blur(8px);
-      border: 1px solid rgba(255,255,255,0.15); padding: 8px 14px; border-radius: 10px;
-      font-size: 14px; font-weight: 600; box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+      border: 1px solid rgba(255,255,255,0.15); padding: 8px 13px; border-radius: 10px;
+      font-size: 13px; font-weight: 600; box-shadow: 0 4px 12px rgba(0,0,0,0.35);
     }
     .badge span { color: #38bdf8; }
 
-    .zoom-hint {
-      position: absolute; bottom: 18px; left: 18px; z-index: 10;
-      background: rgba(15, 23, 42, 0.8); padding: 8px 12px; border-radius: 8px;
-      font-size: 12px; color: #cbd5e1; border: 1px solid rgba(255,255,255,0.12);
+    /* Temporizador de 10 segundos */
+    .timer-banner {
+      display: none; position: fixed; top: 68px; left: 50%; transform: translateX(-50%);
+      z-index: 30; background: rgba(153, 27, 27, 0.95); border: 2px solid #fca5a5;
+      color: #fff; padding: 10px 18px; border-radius: 12px; font-size: 15px; font-weight: 700;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5); text-align: center; animation: pulse 1s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { transform: translateX(-50%) scale(1); }
+      50% { transform: translateX(-50%) scale(1.03); }
     }
 
-    .map-container {
-      position: absolute; bottom: 18px; right: 18px; z-index: 10;
-      width: 310px; height: 220px; border-radius: 14px; overflow: hidden;
-      border: 2px solid rgba(255,255,255,0.25); box-shadow: 0 10px 25px rgba(0,0,0,0.55);
-      transition: all 0.3s ease; display: flex; flex-direction: column; background: #1e293b;
+    .status-pill {
+      display: none; position: fixed; top: 68px; left: 50%; transform: translateX(-50%);
+      z-index: 25; background: rgba(15, 23, 42, 0.92); border: 1px solid #38bdf8;
+      color: #e0f2fe; padding: 9px 16px; border-radius: 10px; font-size: 13px; font-weight: 600;
+      text-align: center;
     }
-    .map-container:hover { width: 430px; height: 310px; }
+
+    /* Minimapa */
+    .map-container {
+      position: fixed; bottom: 18px; right: 18px; z-index: 20;
+      width: 310px; height: 225px; border-radius: 14px; overflow: hidden;
+      border: 2px solid rgba(255,255,255,0.25); box-shadow: 0 10px 25px rgba(0,0,0,0.55);
+      transition: all 0.25s ease; display: flex; flex-direction: column; background: #1e293b;
+    }
+    .map-container:hover { width: 430px; height: 315px; }
     #map { flex: 1; width: 100%; cursor: crosshair; }
     .btn-guess {
       width: 100%; padding: 12px; background: #16a34a; color: white; border: none;
-      font-weight: 700; font-size: 15px; cursor: pointer; transition: 0.2s;
+      font-weight: 700; font-size: 14px; cursor: pointer;
     }
-    .btn-guess:disabled { background: #475569; cursor: not-allowed; opacity: 0.85; }
+    .btn-guess:disabled { background: #475569; cursor: not-allowed; }
     .btn-guess:not(:disabled):hover { background: #15803d; }
 
     @media (max-width: 600px) {
-      .map-container { width: 225px; height: 175px; right: 10px; bottom: 10px; }
+      .map-container { width: 225px; height: 180px; right: 10px; bottom: 10px; }
       .map-container:hover { width: 94vw; height: 270px; }
-      .zoom-hint { display: none; }
     }
 
+    /* Modales */
     .modal-overlay {
-      position: fixed; inset: 0; background: rgba(2, 6, 23, 0.86); z-index: 50;
+      position: fixed; inset: 0; background: rgba(2, 6, 23, 0.88); z-index: 50;
       display: none; align-items: center; justify-content: center; padding: 18px;
     }
     .modal-card {
       background: #1e293b; border: 1px solid rgba(255,255,255,0.15); border-radius: 16px;
-      width: 100%; max-width: 600px; overflow: hidden; box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+      width: 100%; max-width: 620px; overflow: hidden; box-shadow: 0 20px 40px rgba(0,0,0,0.6);
     }
-    #result-map { width: 100%; height: 270px; }
+    #result-map { width: 100%; height: 260px; }
     .modal-body { padding: 20px; text-align: center; }
-    .modal-body h2 { font-size: 21px; color: #38bdf8; margin-bottom: 6px; }
-    .modal-body p { color: #cbd5e1; font-size: 15px; margin-bottom: 14px; }
-    .score-bar { height: 10px; background: #334155; border-radius: 999px; overflow: hidden; margin-bottom: 18px; }
-    .score-fill { height: 100%; background: linear-gradient(90deg, #38bdf8, #22c55e); width: 0%; transition: width 0.5s; }
+    .modal-body h2 { font-size: 21px; color: #38bdf8; margin-bottom: 8px; }
+    .duel-compare {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+      margin: 12px 0 16px; text-align: left;
+    }
+    .player-box {
+      background: #0f172a; border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 10px; padding: 10px 12px; font-size: 13px; line-height: 1.45;
+    }
+    .player-box strong { color: #38bdf8; display: block; margin-bottom: 2px; }
     .btn-next {
-      background: #2563eb; color: white; border: none; padding: 12px 24px;
+      background: #2563eb; color: white; border: none; padding: 12px 22px;
       border-radius: 10px; font-size: 15px; font-weight: 700; cursor: pointer;
     }
     .btn-next:hover { background: #1d4ed8; }
@@ -87,187 +154,85 @@
 </head>
 <body>
 
-  <div class="photo-stage" onclick="toggleZoom()">
-    <img id="round-photo" src="" alt="Rincón de Soto del Barco" onerror="handleImageError()" />
-    <div class="img-error-box" id="img-error-box">
-      No se pudo cargar la imagen <strong id="error-filename"></strong>.<br />
-      Revisa que el archivo esté en la misma carpeta que <code>index.html</code> y que su nombre coincida exactamente (mayúsculas/minúsculas).
+  <!-- Pantalla inicial de modo / sala -->
+  <div id="lobby-screen">
+    <div class="lobby-card">
+      <h1>SotoGuessr</h1>
+      <p class="sub">Rondas aleatorias por Soto del Barco. Juega en solitario o reta a otra persona en un duelo 1v1 con cuenta atrás de 10 segundos.</p>
+
+      <div class="field-group">
+        <label for="player-name">Tu apodo</label>
+        <input id="player-name" class="input-txt" type="text" maxlength="18" placeholder="Ej. Adrián" value="Jugador" />
+      </div>
+
+      <div class="btn-row">
+        <button class="btn-green" onclick="createDuelRoom()">Crear sala 1v1</button>
+        <button class="btn-primary" onclick="joinDuelRoom()">Unirse a sala</button>
+      </div>
+
+      <div class="field-group" style="margin-top: 12px;">
+        <label for="room-code-input">Código de sala (para unirte)</label>
+        <input id="room-code-input" class="input-txt" type="text" maxlength="8" placeholder="Ej. SOTO-4821" style="text-transform: uppercase;" />
+      </div>
+
+      <button class="btn-ghost" onclick="startSoloGame()">Jugar en solitario (rondas aleatorias)</button>
+
+      <div id="lobby-status" class="lobby-status"></div>
     </div>
+  </div>
+
+  <!-- Escena principal del juego -->
+  <div id="photo-container">
+    <img id="round-photo" src="" alt="Ubicación misteriosa en Soto del Barco" />
+    <div id="photo-error" class="photo-error"></div>
   </div>
 
   <div class="hud-top">
     <div class="badge-group">
       <div class="badge">Concejo: <span>Soto del Barco</span></div>
       <div class="badge">Ronda: <span id="round-num">1 / 4</span></div>
-      <div class="badge">Puntos: <span id="total-score">0</span></div>
+      <div class="badge" id="score-badge">Puntos: <span id="total-score">0</span></div>
+      <div class="badge" id="duel-score-badge" style="display:none;">Tú: <span id="my-duel-score">0</span> | Rival: <span id="opp-duel-score">0</span></div>
     </div>
+    <div class="badge" id="room-badge" style="display:none;">Sala: <span id="room-badge-code">-</span></div>
   </div>
 
-  <div class="zoom-hint">🔍 Toca la imagen para hacer zoom</div>
+  <div id="timer-banner" class="timer-banner">
+    ¡Tu rival ya ha respondido! Te quedan <span id="countdown-sec">10</span>s para confirmar
+  </div>
+  <div id="status-pill" class="status-pill"></div>
 
   <div class="map-container">
     <div id="map"></div>
-    <button class="btn-guess" id="guess-btn" disabled onclick="submitGuess()">Pincha en el mapa</button>
+    <button class="btn-guess" id="guess-btn" disabled onclick="handleGuessButton()">Pincha en el mapa</button>
   </div>
 
+  <!-- Modal resultado de ronda -->
   <div class="modal-overlay" id="result-modal">
     <div class="modal-card">
       <div id="result-map"></div>
       <div class="modal-body">
         <h2 id="res-title">Ubicación</h2>
-        <p id="res-stats">Distancia: 0 m</p>
-        <div class="score-bar"><div class="score-fill" id="res-bar"></div></div>
-        <button class="btn-next" id="next-btn" onclick="nextRound()">Siguiente Ronda →</button>
+        <p id="res-solo-text" style="color:#cbd5e1; margin-bottom:14px;"></p>
+        <div id="res-duel-grid" class="duel-compare" style="display:none;">
+          <div class="player-box" id="box-p1"></div>
+          <div class="player-box" id="box-p2"></div>
+        </div>
+        <button class="btn-next" id="next-btn" onclick="handleNextRound()">Siguiente Ronda →</button>
       </div>
     </div>
   </div>
 
+  <!-- Modal final -->
   <div class="modal-overlay" id="final-modal">
     <div class="modal-card">
-      <div class="modal-body" style="padding: 30px 20px;">
-        <h2>🏆 ¡Partida completada!</h2>
-        <p id="final-summary" style="font-size: 17px; margin: 14px 0 20px;">Has conseguido 0 de 20.000 puntos.</p>
-        <button class="btn-next" onclick="restartGame()">Volver a jugar ↻</button>
+      <div class="modal-body" style="padding: 28px 20px;">
+        <h2 id="final-title">🏆 ¡Partida terminada!</h2>
+        <p id="final-summary" style="font-size: 16px; color:#e2e8f0; margin: 14px 0 22px; line-height:1.5;"></p>
+        <button class="btn-next" onclick="backToLobby()">Volver al menú principal</button>
       </div>
     </div>
   </div>
 
-  <script>
-    const ROUNDS = [
-      {
-        name: "Castillo de San Martín",
-        lat: 43.5419,
-        lng: -6.0772,
-        image: "1000047883.jpg"
-      },
-      {
-        name: "Puerto de San Juan de la Arena",
-        lat: 43.5567,
-        lng: -6.0766,
-        image: "1000047885.jpg"
-      },
-      {
-        name: "Puerto Chino (junto al puente hacia Muros del Nalón)",
-        lat: 43.5356,
-        lng: -6.0825,
-        image: "1000047884.jpg"
-      },
-      {
-        name: "La Ferrería (La Corrada)",
-        lat: 43.5266,
-        lng: -6.0350,
-        image: "1000047886.jpg"
-      }
-    ];
-
-    const MAP_CENTER = [43.540, -6.058];
-    const MAP_ZOOM = 12;
-    let currentIdx = 0;
-    let totalScore = 0;
-    let guessMarker = null;
-    let userGuess = null;
-    let resMap = null;
-
-    const map = L.map('map', { zoomControl: false }).setView(MAP_CENTER, MAP_ZOOM);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap'
-    }).addTo(map);
-
-    map.on('click', (e) => {
-      userGuess = e.latlng;
-      if (guessMarker) guessMarker.setLatLng(userGuess);
-      else guessMarker = L.marker(userGuess).addTo(map);
-      const btn = document.getElementById('guess-btn');
-      btn.disabled = false;
-      btn.textContent = "Confirmar ubicación";
-    });
-
-    function handleImageError() {
-      const round = ROUNDS[currentIdx];
-      document.getElementById('round-photo').style.display = 'none';
-      document.getElementById('error-filename').textContent = round.image;
-      document.getElementById('img-error-box').style.display = 'block';
-    }
-
-    function loadRound(idx) {
-      const round = ROUNDS[idx];
-      document.getElementById('round-num').textContent = `${idx + 1} / ${ROUNDS.length}`;
-      const img = document.getElementById('round-photo');
-      document.getElementById('img-error-box').style.display = 'none';
-      img.style.display = 'block';
-      img.classList.remove('zoomed');
-      img.src = round.image;
-
-      if (guessMarker) { map.removeLayer(guessMarker); guessMarker = null; }
-      userGuess = null;
-      const btn = document.getElementById('guess-btn');
-      btn.disabled = true;
-      btn.textContent = "Pincha en el mapa";
-      map.setView(MAP_CENTER, MAP_ZOOM);
-    }
-
-    function toggleZoom() {
-      document.getElementById('round-photo').classList.toggle('zoomed');
-    }
-
-    function getDistanceMeters(lat1, lon1, lat2, lon2) {
-      const R = 6371e3;
-      const p1 = lat1 * Math.PI / 180, p2 = lat2 * Math.PI / 180;
-      const dp = (lat2 - lat1) * Math.PI / 180, dl = (lon2 - lon1) * Math.PI / 180;
-      const a = Math.sin(dp/2)**2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl/2)**2;
-      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    }
-
-    function submitGuess() {
-      const round = ROUNDS[currentIdx];
-      const dist = getDistanceMeters(userGuess.lat, userGuess.lng, round.lat, round.lng);
-      const points = dist < 30 ? 5000 : Math.max(0, Math.round(5000 * Math.exp(-dist / 1400)));
-      totalScore += points;
-      document.getElementById('total-score').textContent = totalScore;
-
-      document.getElementById('res-title').textContent = round.name;
-      document.getElementById('res-stats').textContent =
-        `Estuviste a ${dist < 1000 ? Math.round(dist) + ' metros' : (dist/1000).toFixed(2) + ' km'} — +${points} puntos`;
-      document.getElementById('res-bar').style.width = `${(points / 5000) * 100}%`;
-      document.getElementById('result-modal').style.display = 'flex';
-
-      setTimeout(() => {
-        if (resMap) resMap.remove();
-        resMap = L.map('result-map');
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(resMap);
-        const actual = [round.lat, round.lng];
-        const guess = [userGuess.lat, userGuess.lng];
-        L.marker(actual).addTo(resMap).bindPopup("Ubicación real").openPopup();
-        L.marker(guess).addTo(resMap).bindPopup("Tu respuesta");
-        const line = L.polyline([actual, guess], { color: '#ef4444', dashArray: '6,6' }).addTo(resMap);
-        resMap.fitBounds(line.getBounds(), { padding: [40, 40] });
-      }, 100);
-
-      document.getElementById('next-btn').textContent =
-        currentIdx < ROUNDS.length - 1 ? "Siguiente Ronda →" : "Ver Puntuación Final";
-    }
-
-    function nextRound() {
-      document.getElementById('result-modal').style.display = 'none';
-      if (currentIdx < ROUNDS.length - 1) {
-        currentIdx++;
-        loadRound(currentIdx);
-      } else {
-        document.getElementById('final-summary').textContent =
-          `Has conseguido ${totalScore} de ${ROUNDS.length * 5000} puntos posibles en Soto del Barco.`;
-        document.getElementById('final-modal').style.display = 'flex';
-      }
-    }
-
-    function restartGame() {
-      document.getElementById('final-modal').style.display = 'none';
-      currentIdx = 0;
-      totalScore = 0;
-      document.getElementById('total-score').textContent = "0";
-      loadRound(0);
-    }
-
-    loadRound(0);
-  </script>
-</body>
-</html>
+  <script type="module">
+    import { initializeApp } from "
