@@ -461,8 +461,11 @@
 
           if (currentIdx !== serverRound) {
             currentIdx = serverRound;
+            shownResultForRound = -1;
+            document.getElementById("result-modal").style.display = "none";
             setupRoundUI(currentIdx);
           } else if (!document.getElementById("round-photo").src.includes(ROUNDS[roundOrder[currentIdx]].image)) {
+            document.getElementById("result-modal").style.display = "none";
             setupRoundUI(currentIdx);
           }
 
