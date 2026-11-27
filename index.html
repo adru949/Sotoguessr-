@@ -262,8 +262,8 @@
     const MAP_ZOOM = 12;
     const PRESSURE_SECONDS = 10;
 
-    let mode = "solo"; // "solo" | "duel"
-    let role = null; // "p1" | "p2"
+    let mode = "solo";
+    let role = null;
     let roomCode = null;
     let roomRef = null;
     let roomData = null;
@@ -352,7 +352,6 @@
       return dist < 25 ? 5000 : Math.max(0, Math.round(5000 * Math.exp(-dist / 1200)));
     }
 
-    // Modo solitario
     window.startSoloGame = function () {
       cleanupRoomListener();
       mode = "solo";
@@ -371,7 +370,6 @@
       setupRoundUI(0);
     };
 
-    // Crear sala 1v1
     window.createDuelRoom = async function () {
       cleanupRoomListener();
       mode = "duel";
@@ -382,7 +380,7 @@
       const order = shuffleIndices(ROUNDS.length);
       const initialState = {
         code: roomCode,
-        status: "waiting", // "waiting" | "playing" | "finished"
+        status: "waiting",
         roundOrder: order,
         currentRound: 0,
         p1: { name: getPlayerName(), score: 0 },
@@ -400,7 +398,6 @@
       );
     };
 
-    // Unirse a sala 1v1
     window.joinDuelRoom = async function () {
       const inputCode = document.getElementById("room-code-input").value.trim().toUpperCase();
       if (!inputCode) {
@@ -511,8 +508,7 @@
         errEl.style.display = "block";
         errEl.innerHTML =
           `No se pudo cargar la imagen <b>${roundObj.image}</b>.<br>` +
-       `Comprueba que esté en la misma carpeta
-        que <code>index.html</code> y con el mismo nombre exacto.`;
+          `Comprueba que esté en la misma carpeta que <code>index.html</code> y con el mismo nombre exacto.`;
       };
       imgEl.src = roundObj.image;
     }
@@ -532,7 +528,6 @@
         btn.textContent = oppSub ? "Cerrando ronda..." : "Esperando al rival...";
       }
 
-      // Si el rival ya respondió y yo todavía no, arranca la cuenta atrás de 10 segundos
       if (oppSub && !mySub && !submittedThisRound) {
         showStatusPill(`¡${roomData[oppRole]?.name || "Tu rival"} ya ha marcado su punto!`);
         if (countdownStartedForRound !== roundIndex) {
@@ -543,7 +538,6 @@
         hideStatusPill();
       }
 
-      // Cuando ambos han respondido en esta ronda, se muestra el resultado conjunto
       if (mySub && oppSub && shownResultForRound !== roundIndex) {
         shownResultForRound = roundIndex;
         clearCountdown();
